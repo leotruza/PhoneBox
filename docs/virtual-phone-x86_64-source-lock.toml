@@ -1,0 +1,63 @@
+# Source lock for virtual-phone-x86_64.
+# This file records the intended reproducibility baseline; it does not fetch sources.
+
+[project]
+name = "virtual-phone-x86_64"
+status = "phase-1-harness"
+qemu_machine = "pc-q35-11.1"
+
+[qemu]
+repository = "https://gitlab.com/qemu-project/qemu.git"
+release = "v11.1.0"
+release_tag_object = "2c6a474b8ad0ae6a368a025d720c8aec7e499107"
+phonebox_review_head = "a17ad80afc45366ae0242d88878c21a220edac7f"
+phonebox_review_version = "11.1.50"
+policy = "Do not silently substitute the moving PhoneBox review tree for the v11.1.0 build baseline. Carry required fixes as named patches."
+
+[ovmf]
+repository = "https://github.com/tianocore/edk2.git"
+review_commit = "d07d3f5a5769cc8c9f76385174b73ea85525077"
+platform = "OvmfPkg/OvmfPkgX64.dsc"
+status = "build-and-protocol-audit-pending"
+
+[gbl]
+manifest_repository = "https://android.googlesource.com/kernel/manifest"
+manifest_branch = "uefi-gbl-mainline"
+manifest_review_commit = "fbf316d03a5312c3d58699332a0e3a9ffe955c4c"
+source_project = "platform/bootable/libbootloader"
+source_branch = "gbl-mainline"
+source_review_commit = "206c43c04f88d04b7be8481a8b7ee232290d3bf9"
+target = "x86_64_dev"
+efi_path = "/EFI/BOOT/BOOTX64.EFI"
+fastboot_tcp = true
+fastboot_tcp_port = 5554
+fastboot_tcp_policy = "development-only"
+
+[android]
+manifest_repository = "https://android.googlesource.com/platform/manifest"
+manifest_branch = "android17-release"
+manifest_review_commit = "29ace668ae756c7b8917c57abb440f6518844b0c"
+product = "sdk_phone64_x86_64-userdebug"
+product_device = "emu64x"
+kernel = "prebuilts/qemu-kernel x86_64/6.12"
+kernel_review_commit = "7fe7e19e1bdb1850d637ce32b206db0b61fc937e"
+
+[twrp]
+repository = "https://github.com/TeamWin/android_bootable_recovery.git"
+branch = "android-14.1"
+status = "new-android17-x86_64-port-required"
+
+[magisk]
+release = "v30.7"
+commit = "e8a58776f1d7bdf852072ad0baa6eceb9a1e4aac"
+android17_fallback = "v31.0-prerelease"
+
+[host_tools]
+adb_fastboot = "versioned Android Platform Tools archive; record SHA-256 before Windows acceptance"
+
+[phase_status]
+source_lock = "recorded"
+launcher = "implemented"
+qemu_build = "pending-on-host-with-qemu-and-ovmf"
+gbl_build = "pending-on-host-with-aosp-bazel"
+aosp_build = "pending-on-host-with-aosp-resources"

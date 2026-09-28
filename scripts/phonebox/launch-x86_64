@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# Launch the virtual-phone-x86_64 development profile.
+#
+# This launcher intentionally does not require a custom QEMU machine type. It
+# uses the versioned Q35 machine and explicit virtio devices so implicit
+# e1000e/audio devices cannot change the guest hardware contract.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: launch-x86_64 [options]
+
+Required environment:
+  PHONEBOX_QEMU       QEMU system-x86_64 binary (default: qemu-system-x86_64)
+  PHONEBOX_OVMF_CODE  read-only OVMF_CODE.fd path
+  PHONEBOX_OVMF_VARS  writable OVMF_VARS.fd path
+  PHONEBOX_DISK       persistent qcow2 disk containing the guest GPT
+
+Optional environment:
+  PHONEBOX_MEMORY     guest memory, default: 4096
+  PHONEBOX_SMP        guest vCPU count, default: 4
+  PHONEBOX_SSH_PORT   host TCP port forwarded to guest 22, default: 0 (disabled)
+  PHONEBOX_ADB_PORT   host TCP port forwarded to guest 5555, default: 0 (disabled)
+  PHONEBOX_MONITOR    QMP Unix socket, default: <runtime-dir>/phonebox-qmp.sock
+  PHONEBOX_SERIAL_LOG serial log file, default: <runtime-dir>/serial.log
+
+Options:
+  --dry-run           print the exact command without executing it
+  --                  pass remaining arguments directly to QEMU
+  -h, --help          show this help
+EOF
+}
+
+qemu_bin=${PHONEBOX_QEMU:-qemu-system-x86_64}
+ovmf_code=${PHONEBOX_OVMF_CODE:-}
+ovmf_vars=${PHONEBOX_OVMF_VARS:-}
+disk=${PHONEBOX_DISK:-}
+memory=${PHONEBOX_MEMORY:-4096}
+smp=${PHONEBOX_SMP:-4}
+ssh_port=${PHONEBOX_SSH_PORT:-0}
+adb_port=${PHONEBOX_ADB_PORT:-0}
+runtime_dir=${PHONEBOX_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/tmp}/phonebox-x86_64}
+qmp_socket=${PHONEBOX_MONITOR:-$runtime_dir/phonebox-qmp.sock}
+serial_log=${PHONEBOX_SERIAL_LOG:-$runtime_dir/serial.log}
+display=${PHONEBOX_DISPLAY:-gtk,gl=off}
+dry_run=0
+extra_args=()
+
+while (($#)); do
+    case $1 in
+        --dry-run) dry_run=1 ;;
+        -h|--help) usage >&1; exit 0 ;;
+        --) shift; extra_args+=("$@"); break ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+
+require_value() {
+    local name=$1 value=$2
+    if [[ -z $value ]]; then
+        echo "error: $name is required" >&2
+        usage
+        exit 2
+    fi
+}
+
+require_value PHONEBOX_OVMF_CODE "$ovmf_code"
+require_value PHONEBOX_OVMF_VARS "$ovmf_vars"
+require_value PHONEBOX_DISK "$disk"
+
+if ! [[ $memory =~ ^[0-9]+$ && $memory -gt 0 ]]; then
+    echo "error: PHONEBOX_MEMORY must be a positive integer in MiB" >&2
+    exit 2
+fi
+if ! [[ $smp =~ ^[0-9]+$ && $smp -gt 0 ]]; then
+    echo "error: PHONEBOX_SMP must be a positive integer" >&2
+    exit 2
+fi
+for value in "$ssh_port" "$adb_port"; do
+    if ! [[ $value =~ ^[0-9]+$ && $value -le 65535 ]]; then
+        echo "error: forwarded ports must be integers in [0, 65535]" >&2
+        exit 2
+    fi
+done
+
+if ((dry_run == 0)); then
+    command -v "$qemu_bin" >/dev/null 2>&1 || {
+        echo "error: QEMU binary not found: $qemu_bin" >&2
+        exit 127
+    }
+    [[ -r $ovmf_code ]] || { echo "error: OVMF code is not readable: $ovmf_code" >&2; exit 2; }
+    [[ -r $ovmf_vars ]] || { echo "error: OVMF vars are not readable: $ovmf_vars" >&2; exit 2; }
+    [[ -w $ovmf_vars ]] || { echo "error: OVMF vars are not writable: $ovmf_vars" >&2; exit 2; }
+    [[ -r $disk ]] || { echo "error: disk is not readable: $disk" >&2; exit 2; }
+fi
+
+mkdir -p "$runtime_dir"
+rm -f "$qmp_socket"
+
+netdev="user,id=net0"
+if [[ $ssh_port != 0 ]]; then
+    netdev+=",hostfwd=tcp:127.0.0.1:${ssh_port}-:22"
+fi
+if [[ $adb_port != 0 ]]; then
+    netdev+=",hostfwd=tcp:127.0.0.1:${adb_port}-:5555"
+fi
+
+args=(
+    "$qemu_bin"
+    -name virtual-phone-x86_64
+    -machine pc-q35-11.1,acpi=on
+    -nodefaults
+    -accel tcg,thread=multi
+    -cpu max
+    -m "$memory"
+    -smp "$smp"
+    -no-reboot
+    -display "$display"
+    -serial "file:$serial_log"
+    -qmp "unix:$qmp_socket,server=on,wait=off"
+    -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code"
+    -drive "if=pflash,format=raw,file=$ovmf_vars"
+    -blockdev "driver=file,node-name=state-file,filename=$disk,auto-read-only=off,discard=unmap"
+    -blockdev "driver=qcow2,node-name=state-disk,file=state-file"
+    -device virtio-blk-pci,drive=state-disk,bootindex=1
+    -netdev "$netdev"
+    -device virtio-net-pci,netdev=net0
+    -device virtio-rng-pci
+    -device virtio-gpu-pci
+    -device virtio-keyboard-pci
+    -device virtio-tablet-pci
+)
+
+args+=("${extra_args[@]}")
+
+printf 'PhoneBox launcher: %q' "${args[0]}"
+for arg in "${args[@]:1}"; do printf ' %q' "$arg"; done
+printf '\n'
+
+if ((dry_run)); then
+    exit 0
+fi
+
+exec "${args[@]}"
