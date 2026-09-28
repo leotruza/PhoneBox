@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Manage named QEMU VM snapshots through the launcher QMP socket.
+#
+# The guest should be shut down or filesystem-frozen before save. This tool
+# intentionally uses QMP's human-monitor-command bridge for compatibility with
+# the v11.1 machine baseline while keeping all communication on the QMP socket.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: snapshot --qmp SOCKET {list|save|load|delete} [NAME]
+
+Commands:
+  list                 list named snapshots
+  save NAME            save a named VM snapshot
+  load NAME            load a named VM snapshot
+  delete NAME          delete a named VM snapshot
+
+The QEMU process must have been started with a server-mode QMP Unix socket.
+Save snapshots only after guest shutdown or filesystem freeze.
+EOF
+}
+
+qmp_socket=${PHONEBOX_MONITOR:-}
+if [[ ${1:-} == --qmp ]]; then
+    (($# >= 2)) || { echo 'error: --qmp requires a socket path' >&2; exit 2; }
+    qmp_socket=$2
+    shift 2
+fi
+qmp_socket=${qmp_socket:-${XDG_RUNTIME_DIR:-/tmp}/phonebox-x86_64/phonebox-qmp.sock}
+command=${1:-}
+name=${2:-}
+
+case $command in
+    list) ;;
+    save|load|delete)
+        [[ -n $name ]] || { echo "error: $command requires NAME" >&2; usage; exit 2; }
+        ;;
+    -h|--help|'') usage >&1; exit 0 ;;
+    *) echo "error: unknown command: $command" >&2; usage; exit 2 ;;
+esac
+
+[[ -S $qmp_socket ]] || {
+    echo "error: QMP socket is not available: $qmp_socket" >&2
+    exit 2
+}
+
+QMP_SOCKET="$qmp_socket" QMP_COMMAND="$command" QMP_NAME="$name" python3 - <<'PY'
+import json
+import os
+import socket
+import sys
+
+sock_path = os.environ["QMP_SOCKET"]
+command = os.environ["QMP_COMMAND"]
+name = os.environ.get("QMP_NAME", "")
+
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sock_path)
+s_file = s.makefile("rwb", buffering=0)
+
+def receive():
+    line = s_file.readline()
+    if not line:
+        raise RuntimeError("QMP closed the connection")
+    return json.loads(line)
+
+def send(payload):
+    s_file.write((json.dumps(payload, separators=(",", ":")) + "\r\n").encode())
+    while True:
+        response = receive()
+        if "event" not in response:
+            return response
+
+hello = receive()
+if "QMP" not in hello:
+    raise RuntimeError(f"unexpected QMP greeting: {hello}")
+capabilities = send({"execute": "qmp_capabilities"})
+if "error" in capabilities:
+    raise RuntimeError(capabilities["error"])
+
+if command == "list":
+    result = send({
+        "execute": "human-monitor-command",
+        "arguments": {"command-line": "info snapshots"},
+    })
+else:
+    hmp = {"save": "savevm", "load": "loadvm", "delete": "delvm"}[command]
+    result = send({
+        "execute": "human-monitor-command",
+        "arguments": {"command-line": f"{hmp} {name}"},
+    })
+
+if "error" in result:
+    raise RuntimeError(result["error"])
+output = result.get("return", "")
+if isinstance(output, str):
+    sys.stdout.write(output)
+else:
+    print(json.dumps(output, indent=2, sort_keys=True))
+PY

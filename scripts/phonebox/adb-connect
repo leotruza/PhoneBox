@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Connect the host ADB client to the PhoneBox Android transport.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: adb-connect [HOST] [PORT]
+
+Environment:
+  PHONEBOX_ADB       adb binary, default: adb
+  PHONEBOX_ADB_HOST  guest address, default: 127.0.0.1
+  PHONEBOX_ADB_PORT  host-forwarded ADB port, default: 5555
+EOF
+}
+
+case ${1:-} in
+    -h|--help) usage >&1; exit 0 ;;
+esac
+
+adb_bin=${PHONEBOX_ADB:-adb}
+host=${1:-${PHONEBOX_ADB_HOST:-127.0.0.1}}
+port=${2:-${PHONEBOX_ADB_PORT:-5555}}
+
+[[ $port =~ ^[0-9]+$ && $port -le 65535 && $port -gt 0 ]] || {
+    echo "error: invalid ADB port: $port" >&2
+    exit 2
+}
+command -v "$adb_bin" >/dev/null 2>&1 || {
+    echo "error: ADB binary not found: $adb_bin" >&2
+    exit 127
+}
+
+exec "$adb_bin" connect "${host}:${port}"

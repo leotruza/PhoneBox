@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Run the host Fastboot client against GBL's development TCP transport.
+#
+# GBL's current development path uses port 5554 and link-local IPv6 over an
+# EFI SNP-visible network. The caller supplies the address exactly as accepted
+# by the installed AOSP fastboot client.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: fastboot-ipv6 ADDRESS [PORT] [FASTBOOT_ARGUMENTS...]
+
+Examples:
+  fastboot-ipv6 '[fe80::1234%tap0]' getvar:version
+  fastboot-ipv6 'fe80::1234%tap0' 5554 getvar:all
+
+Environment:
+  PHONEBOX_FASTBOOT   fastboot binary, default: fastboot
+  PHONEBOX_FASTBOOT_PORT  default: 5554
+EOF
+}
+
+(($# >= 1)) || { usage; exit 2; }
+case $1 in
+    -h|--help) usage >&1; exit 0 ;;
+esac
+
+fastboot_bin=${PHONEBOX_FASTBOOT:-fastboot}
+address=$1
+shift
+port=${PHONEBOX_FASTBOOT_PORT:-5554}
+if (($# > 0)) && [[ $1 =~ ^[0-9]+$ ]]; then
+    port=$1
+    shift
+fi
+[[ $port =~ ^[0-9]+$ && $port -le 65535 && $port -gt 0 ]] || {
+    echo "error: invalid Fastboot TCP port: $port" >&2
+    exit 2
+}
+command -v "$fastboot_bin" >/dev/null 2>&1 || {
+    echo "error: Fastboot binary not found: $fastboot_bin" >&2
+    exit 127
+}
+
+# Keep the address spelling supplied by the operator. AOSP fastboot handles
+# IPv6 endpoint parsing; this avoids rewriting zone identifiers or brackets.
+exec "$fastboot_bin" "tcp:${address}:${port}" "$@"
