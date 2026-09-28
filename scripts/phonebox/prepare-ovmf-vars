@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Create an isolated writable OVMF variable store for one PhoneBox instance.
+# The source template is never modified or shared concurrently.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: prepare-ovmf-vars --template PATH --output PATH [--force]
+
+Copies a pristine OVMF_VARS.fd template to a per-instance writable path.
+EOF
+}
+
+template=${PHONEBOX_OVMF_VARS_TEMPLATE:-}
+output=${PHONEBOX_OVMF_VARS:-}
+force=0
+
+while (($#)); do
+    case $1 in
+        --template) (($# >= 2)) || { echo 'error: --template requires a path' >&2; exit 2; }; template=$2; shift 2; continue ;;
+        --output) (($# >= 2)) || { echo 'error: --output requires a path' >&2; exit 2; }; output=$2; shift 2; continue ;;
+        --force) force=1 ;;
+        -h|--help) usage >&1; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+
+[[ -n $template && -n $output ]] || { echo 'error: --template and --output are required' >&2; usage; exit 2; }
+[[ -r $template ]] || { echo "error: OVMF vars template is not readable: $template" >&2; exit 2; }
+if [[ -e $output && $force -eq 0 ]]; then
+    echo "error: output exists; use --force: $output" >&2
+    exit 2
+fi
+
+mkdir -p "$(dirname -- "$output")"
+if ((force)); then rm -f -- "$output"; fi
+install -m 0644 -- "$template" "$output"
+printf 'Prepared isolated OVMF vars: %s\n' "$output"

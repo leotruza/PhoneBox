@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Stage GBL and Android boot assets into a reproducible ESP directory tree.
+# This does not write a disk partition and does not build or test artifacts.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: stage-boot-assets --gbl PATH --esp-dir DIR [options]
+
+Required:
+  --gbl PATH          GBL x86_64 EFI binary
+  --esp-dir DIR       ESP staging directory
+
+Optional image assets:
+  --boot PATH         Android boot.img
+  --vendor-boot PATH  Android vendor_boot.img
+  --init-boot PATH    Android init_boot.img
+  --dtbo PATH         Android dtbo.img
+  --vbmeta PATH       Android vbmeta.img
+  --recovery PATH     PhoneBox TWRP recovery image
+  --kernel PATH       x86_64 bzImage used by the ordinary GBL path
+  --force             replace the staging directory
+  --help              show this help
+
+The GBL fallback path is always EFI/BOOT/BOOTX64.EFI for this x86_64 profile.
+EOF
+}
+
+gbl=
+esp_dir=
+force=0
+boot=
+vendor_boot=
+init_boot=
+dtbo=
+vbmeta=
+recovery=
+kernel=
+
+while (($#)); do
+    case $1 in
+        --gbl) (($# >= 2)) || { echo 'error: --gbl requires a path' >&2; exit 2; }; gbl=$2; shift 2; continue ;;
+        --esp-dir) (($# >= 2)) || { echo 'error: --esp-dir requires a path' >&2; exit 2; }; esp_dir=$2; shift 2; continue ;;
+        --boot) boot=$2; shift 2; continue ;;
+        --vendor-boot) vendor_boot=$2; shift 2; continue ;;
+        --init-boot) init_boot=$2; shift 2; continue ;;
+        --dtbo) dtbo=$2; shift 2; continue ;;
+        --vbmeta) vbmeta=$2; shift 2; continue ;;
+        --recovery) recovery=$2; shift 2; continue ;;
+        --kernel) kernel=$2; shift 2; continue ;;
+        --force) force=1 ;;
+        -h|--help) usage >&1; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+
+[[ -n $gbl && -n $esp_dir ]] || { echo 'error: --gbl and --esp-dir are required' >&2; usage; exit 2; }
+[[ -r $gbl ]] || { echo "error: GBL binary is not readable: $gbl" >&2; exit 2; }
+if [[ -e $esp_dir && $force -eq 0 ]]; then
+    echo "error: ESP directory exists; use --force: $esp_dir" >&2
+    exit 2
+fi
+
+if ((force)); then rm -rf -- "$esp_dir"; fi
+mkdir -p "$esp_dir/EFI/BOOT" "$esp_dir/android"
+cp -- "$gbl" "$esp_dir/EFI/BOOT/BOOTX64.EFI"
+
+copy_asset() {
+    local source=$1 target=$2
+    [[ -z $source ]] && return 0
+    [[ -r $source ]] || { echo "error: asset is not readable: $source" >&2; exit 2; }
+    cp -- "$source" "$esp_dir/android/$target"
+}
+
+copy_asset "$boot" boot.img
+copy_asset "$vendor_boot" vendor_boot.img
+copy_asset "$init_boot" init_boot.img
+copy_asset "$dtbo" dtbo.img
+copy_asset "$vbmeta" vbmeta.img
+copy_asset "$recovery" recovery.img
+copy_asset "$kernel" bzImage
+
+{
+    printf '# virtual-phone-x86_64 ESP staging manifest\n'
+    printf 'efi_path=/EFI/BOOT/BOOTX64.EFI\n'
+    printf 'gbl_target=x86_64_dev\n'
+    printf 'generated_at_epoch=%s\n' "$(date +%s)"
+    printf '\n# sha256 path\n'
+    (cd "$esp_dir" && find EFI android -type f -print0 | sort -z | xargs -0 sha256sum)
+} > "$esp_dir/manifest.txt"
+
+printf 'Staged ESP assets: %s\n' "$esp_dir"
+printf 'Manifest: %s/manifest.txt\n' "$esp_dir"
