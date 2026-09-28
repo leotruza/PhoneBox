@@ -22,6 +22,9 @@ Optional environment:
   PHONEBOX_SMP        guest vCPU count, default: 4
   PHONEBOX_SSH_PORT   host TCP port forwarded to guest 22, default: 0 (disabled)
   PHONEBOX_ADB_PORT   host TCP port forwarded to guest 5555, default: 0 (disabled)
+  PHONEBOX_NET_MODE   user or tap, default: user
+  PHONEBOX_TAP_IFNAME TAP interface name when NET_MODE=tap
+  PHONEBOX_MODEM_SOCKET Unix socket for optional named modem virtio-serial port
   PHONEBOX_MONITOR    QMP Unix socket, default: <runtime-dir>/phonebox-qmp.sock
   PHONEBOX_SERIAL_LOG serial log file, default: <runtime-dir>/serial.log
 
@@ -40,6 +43,9 @@ memory=${PHONEBOX_MEMORY:-4096}
 smp=${PHONEBOX_SMP:-4}
 ssh_port=${PHONEBOX_SSH_PORT:-0}
 adb_port=${PHONEBOX_ADB_PORT:-0}
+net_mode=${PHONEBOX_NET_MODE:-user}
+tap_ifname=${PHONEBOX_TAP_IFNAME:-}
+modem_socket=${PHONEBOX_MODEM_SOCKET:-}
 runtime_dir=${PHONEBOX_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/tmp}/phonebox-x86_64}
 qmp_socket=${PHONEBOX_MONITOR:-$runtime_dir/phonebox-qmp.sock}
 serial_log=${PHONEBOX_SERIAL_LOG:-$runtime_dir/serial.log}
@@ -85,6 +91,18 @@ for value in "$ssh_port" "$adb_port"; do
     fi
 done
 
+case $net_mode in
+    user) ;;
+    tap)
+        [[ -n $tap_ifname ]] || { echo 'error: PHONEBOX_TAP_IFNAME is required for tap networking' >&2; exit 2; }
+        [[ $ssh_port == 0 && $adb_port == 0 ]] || {
+            echo 'error: SSH/ADB host forwarding is only available with user networking' >&2
+            exit 2
+        }
+        ;;
+    *) echo "error: PHONEBOX_NET_MODE must be user or tap: $net_mode" >&2; exit 2 ;;
+esac
+
 if ((dry_run == 0)); then
     command -v "$qemu_bin" >/dev/null 2>&1 || {
         echo "error: QEMU binary not found: $qemu_bin" >&2
@@ -99,12 +117,16 @@ fi
 mkdir -p "$runtime_dir"
 rm -f "$qmp_socket"
 
-netdev="user,id=net0"
-if [[ $ssh_port != 0 ]]; then
-    netdev+=",hostfwd=tcp:127.0.0.1:${ssh_port}-:22"
-fi
-if [[ $adb_port != 0 ]]; then
-    netdev+=",hostfwd=tcp:127.0.0.1:${adb_port}-:5555"
+if [[ $net_mode == user ]]; then
+    netdev="user,id=net0"
+    if [[ $ssh_port != 0 ]]; then
+        netdev+=",hostfwd=tcp:127.0.0.1:${ssh_port}-:22"
+    fi
+    if [[ $adb_port != 0 ]]; then
+        netdev+=",hostfwd=tcp:127.0.0.1:${adb_port}-:5555"
+    fi
+else
+    netdev="tap,id=net0,ifname=${tap_ifname},script=no,downscript=no"
 fi
 
 args=(
@@ -131,7 +153,15 @@ args=(
     -device virtio-gpu-pci
     -device virtio-keyboard-pci
     -device virtio-tablet-pci
+    -device virtio-serial-pci
 )
+
+if [[ -n $modem_socket ]]; then
+    args+=(
+        -chardev "socket,id=modem,path=$modem_socket"
+        -device virtserialport,chardev=modem,name=modem
+    )
+fi
 
 args+=("${extra_args[@]}")
 
