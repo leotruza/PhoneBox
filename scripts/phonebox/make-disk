@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Create the unified virtual-phone-x86_64 GPT state disk.
+#
+# This phase creates the partition table only. Android image placement and
+# filesystem formatting remain separate operations because their sizes and
+# formats must come from the selected AOSP build artifacts.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: make-disk --output PATH [options]
+
+Creates a raw GPT layout and converts it to a qcow2 state disk.
+
+Required:
+  --output PATH       output qcow2 path
+
+Options:
+  --size GiB          raw disk capacity, default: 32
+  --esp-b             create the inactive android_esp_b reservation (default)
+  --no-esp-b          omit android_esp_b
+  --with-init-boot    create an init_boot partition reservation
+  --with-dtbo         create a dtbo partition reservation
+  --with-odm          create an odm partition reservation
+  --force             replace an existing output file
+  --                  reserved for future image-placement arguments
+  -h, --help          show this help
+
+The output is a layout container. It does not contain Android boot, super,
+userdata, or recovery images until a later image-placement phase.
+EOF
+}
+
+output=
+size_gib=32
+with_esp_b=1
+with_init_boot=0
+with_dtbo=0
+with_odm=0
+force=0
+
+while (($#)); do
+    case $1 in
+        --output)
+            (($# >= 2)) || { echo 'error: --output requires a path' >&2; exit 2; }
+            output=$2; shift 2; continue ;;
+        --size)
+            (($# >= 2)) || { echo 'error: --size requires GiB' >&2; exit 2; }
+            size_gib=$2; shift 2; continue ;;
+        --esp-b) with_esp_b=1 ;;
+        --no-esp-b) with_esp_b=0 ;;
+        --with-init-boot) with_init_boot=1 ;;
+        --with-dtbo) with_dtbo=1 ;;
+        --with-odm) with_odm=1 ;;
+        --force) force=1 ;;
+        --) echo 'error: image-placement arguments are not supported in this phase' >&2; exit 2 ;;
+        -h|--help) usage >&1; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+
+[[ -n $output ]] || { echo 'error: --output is required' >&2; usage; exit 2; }
+[[ $size_gib =~ ^[0-9]+$ && $size_gib -ge 16 ]] || {
+    echo 'error: --size must be an integer GiB of at least 16' >&2
+    exit 2
+}
+
+for tool in qemu-img sgdisk; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        echo "error: required tool not found: $tool" >&2
+        exit 127
+    }
+done
+
+if [[ -e $output && $force -eq 0 ]]; then
+    echo "error: output exists; use --force to replace it: $output" >&2
+    exit 2
+fi
+
+output_dir=$(dirname -- "$output")
+mkdir -p "$output_dir"
+output_abs=$(cd "$output_dir" && printf '%s/%s' "$PWD" "$(basename -- "$output")")
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/phonebox-disk.XXXXXX")
+raw="$work_dir/state.raw"
+layout="$output_abs.layout"
+cleanup() { rm -rf "$work_dir"; }
+trap cleanup EXIT
+
+if ((force)); then
+    rm -f -- "$output_abs" "$layout"
+fi
+
+# GPT tools use 512-byte sectors. Reserve the first and final 1 MiB for GPT
+# metadata and keep every partition aligned to 1 MiB.
+sectors_per_gib=2097152
+sectors_per_mib=2048
+disk_sectors=$((size_gib * sectors_per_gib))
+last_usable=$((disk_sectors - sectors_per_mib - 1))
+
+qemu-img create -f raw "$raw" "${size_gib}G" >/dev/null
+sgdisk --clear --mbrtogpt --disk-guid=7f6f6f01-9f9a-4c9b-8a30-000000000001 "$raw" >/dev/null
+
+part=1
+next_start=2048
+add_partition() {
+    local name=$1 size_mib=$2 type=$3
+    local sectors=$((size_mib * sectors_per_mib))
+    local end=$((next_start + sectors - 1))
+    ((end < last_usable)) || { echo "error: disk too small for partition $name" >&2; exit 2; }
+    sgdisk "--new=${part}:${next_start}:${end}" \
+        "--typecode=${part}:${type}" \
+        "--change-name=${part}:${name}" "$raw" >/dev/null
+    printf '%02d %-16s start=%-10d sectors=%-10d type=%s\n' \
+        "$part" "$name" "$next_start" "$sectors" "$type" >> "$layout"
+    next_start=$((end + 1 + sectors_per_mib))
+    part=$((part + 1))
+}
+
+: > "$layout"
+cat >> "$layout" <<EOF
+# virtual-phone-x86_64 layout
+# capacity=${size_gib}GiB sector_size=512 alignment=1MiB
+# generated_by=scripts/phonebox/make-disk
+EOF
+
+# ESPs are intentionally first and sized at 16 MiB each, above GBL's 8 MiB
+# minimum. The ESP type GUID is the standard UEFI value.
+add_partition android_esp_a 16 EF00
+if ((with_esp_b)); then add_partition android_esp_b 16 EF00; fi
+add_partition boot 128 8300
+add_partition vendor_boot 128 8300
+if ((with_init_boot)); then add_partition init_boot 64 8300; fi
+add_partition recovery 128 8300
+if ((with_dtbo)); then add_partition dtbo 16 8300; fi
+add_partition vbmeta 16 8300
+add_partition super 2048 8300
+add_partition metadata 64 8300
+add_partition misc 16 8300
+add_partition userdata 4096 8300
+if ((with_odm)); then add_partition odm 512 8300; fi
+
+# The remaining space is intentionally left unallocated for future expansion
+# or an image-specific partition contract. Verify and record the raw GPT before
+# converting it; sgdisk does not inspect the partition table inside qcow2.
+sgdisk --verify "$raw" >/dev/null
+sgdisk --print "$raw" >> "$layout"
+qemu-img convert -f raw -O qcow2 -o cluster_size=2M,compat=1.1 "$raw" "$output_abs"
+printf 'Created layout disk: %s\n' "$output_abs"
+printf 'Layout manifest: %s\n' "$layout"

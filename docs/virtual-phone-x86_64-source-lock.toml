@@ -58,6 +58,7 @@ adb_fastboot = "versioned Android Platform Tools archive; record SHA-256 before 
 [phase_status]
 source_lock = "recorded"
 launcher = "implemented"
+disk_layout_builder = "implemented-layout-only"
 qemu_build = "pending-on-host-with-qemu-and-ovmf"
 gbl_build = "pending-on-host-with-aosp-bazel"
 aosp_build = "pending-on-host-with-aosp-resources"
