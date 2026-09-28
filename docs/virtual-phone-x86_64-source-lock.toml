@@ -57,11 +57,14 @@ adb_fastboot = "versioned Android Platform Tools archive; record SHA-256 before 
 
 [phase_status]
 source_lock = "recorded"
+source_bootstrap = "implemented-pinned-orchestrator"
+baseline_build_orchestrator = "implemented-not-run"
 launcher = "implemented"
 disk_layout_builder = "implemented-layout-only"
 snapshot_tool = "implemented-qmp-wrapper"
 adb_wrapper = "implemented-host-wrapper"
 fastboot_wrapper = "implemented-host-wrapper"
-qemu_build = "pending-on-host-with-qemu-and-ovmf"
-gbl_build = "pending-on-host-with-aosp-bazel"
-aosp_build = "pending-on-host-with-aosp-resources"
+qemu_build = "orchestrated-not-run"
+ovmf_build = "orchestrated-not-run"
+gbl_build = "orchestrated-not-run"
+aosp_build = "orchestrated-not-run"

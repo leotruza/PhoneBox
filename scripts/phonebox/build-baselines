@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Build pinned baseline artifacts for virtual-phone-x86_64.
+# This script does not run tests; it only performs the requested builds when
+# explicitly invoked on a provisioned development host.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: build-baselines [options]
+
+Options:
+  --sources PATH    source workspace, default: $PHONEBOX_SOURCES or .phonebox-sources
+  --out PATH        artifact workspace, default: $PHONEBOX_BUILD or .phonebox-build
+  --jobs N          build parallelism, default: nproc
+  --only NAME       qemu, ovmf, gbl, or aosp; may be repeated
+  --help            show this help
+
+No tests are run. A build manifest with output paths and source revisions is
+written after the selected build stages complete.
+EOF
+}
+
+sources=${PHONEBOX_SOURCES:-.phonebox-sources}
+out=${PHONEBOX_BUILD:-.phonebox-build}
+jobs=$(nproc 2>/dev/null || printf '4')
+only=()
+
+while (($#)); do
+    case $1 in
+        --sources) (($# >= 2)) || { echo 'error: --sources requires a path' >&2; exit 2; }; sources=$2; shift 2; continue ;;
+        --out) (($# >= 2)) || { echo 'error: --out requires a path' >&2; exit 2; }; out=$2; shift 2; continue ;;
+        --jobs) (($# >= 2)) || { echo 'error: --jobs requires a number' >&2; exit 2; }; jobs=$2; shift 2; continue ;;
+        --only) (($# >= 2)) || { echo 'error: --only requires a stage' >&2; exit 2; }; only+=("$2"); shift 2; continue ;;
+        -h|--help) usage >&1; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+
+[[ $jobs =~ ^[0-9]+$ && $jobs -gt 0 ]] || { echo 'error: --jobs must be positive' >&2; exit 2; }
+sources=$(cd "$sources" && pwd)
+out=$(mkdir -p "$out" && cd "$out" && pwd)
+
+want() {
+    ((${#only[@]} == 0)) && return 0
+    local stage
+    for stage in "${only[@]}"; do [[ $stage == "$1" ]] && return 0; done
+    return 1
+}
+
+require_dir() {
+    [[ -d $1 ]] || { echo "error: source directory not found: $1" >&2; exit 2; }
+}
+
+build_qemu() {
+    local src=$sources/qemu build=$out/qemu
+    require_dir "$src"
+    mkdir -p "$build"
+    meson setup "$build" "$src" \
+        --wipe \
+        -Ddefault_library=static \
+        -Ddebug=false \
+        -Dstrip=true \
+        -Dtarget_list=x86_64-softmmu
+    meson compile -C "$build" -j "$jobs"
+}
+
+build_ovmf() {
+    local src=$sources/edk2
+    require_dir "$src"
+    [[ -f "$src/edksetup.sh" ]] || { echo "error: edk2 source is incomplete: $src" >&2; exit 2; }
+    (
+        cd "$src"
+        export WORKSPACE="$out/edk2-workspace"
+        export CONF_PATH="$WORKSPACE/Conf"
+        mkdir -p "$WORKSPACE"
+        source edksetup.sh BaseTools
+        make -C BaseTools -j"$jobs"
+        build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE
+    )
+    mkdir -p "$out/ovmf"
+    cp "$src/Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd" "$out/ovmf/OVMF_CODE.fd"
+    cp "$src/Build/OvmfX64/RELEASE_GCC5/FV/OVMF_VARS.fd" "$out/ovmf/OVMF_VARS.fd"
+}
+
+build_gbl() {
+    local src=$sources/gbl
+    require_dir "$src"
+    command -v bazel >/dev/null 2>&1 || command -v bazelisk >/dev/null 2>&1 || {
+        echo 'error: bazel or bazelisk is required for GBL' >&2
+        exit 127
+    }
+    (
+        cd "$src"
+        ./bazel.sh run //bootable/libbootloader:gbl_efi_dist
+    )
+    mkdir -p "$out/gbl"
+    cp -a "$src/out/gbl_efi/." "$out/gbl/"
+}
+
+build_aosp() {
+    local src=$sources/aosp
+    require_dir "$src"
+    [[ -f "$src/build/envsetup.sh" ]] || { echo "error: AOSP source is incomplete: $src" >&2; exit 2; }
+    (
+        cd "$src"
+        source build/envsetup.sh
+        lunch sdk_phone64_x86_64-userdebug
+        m -j"$jobs"
+    )
+    mkdir -p "$out/aosp"
+    cp -a "$src/out/target/product/emu64x/." "$out/aosp/"
+}
+
+want qemu && build_qemu
+want ovmf && build_ovmf
+want gbl && build_gbl
+want aosp && build_aosp
+
+manifest="$out/build-manifest.txt"
+{
+    printf '# virtual-phone-x86_64 baseline build manifest\n'
+    printf 'sources=%s\n' "$sources"
+    printf 'artifacts=%s\n' "$out"
+    printf 'jobs=%s\n' "$jobs"
+    for component in qemu edk2 gbl aosp; do
+        path="$sources/$component"
+        if [[ -d $path/.git ]]; then
+            printf '%s_commit=%s\n' "$component" "$(git -C "$path" rev-parse HEAD)"
+        fi
+    done
+    printf 'qemu_binary=%s\n' "$out/qemu/build/qemu-system-x86_64"
+    printf 'ovmf_code=%s\n' "$out/ovmf/OVMF_CODE.fd"
+    printf 'ovmf_vars=%s\n' "$out/ovmf/OVMF_VARS.fd"
+    printf 'gbl_distribution=%s\n' "$out/gbl"
+    printf 'android_product=%s\n' "$out/aosp"
+} > "$manifest"
+printf 'Baseline build manifest: %s\n' "$manifest"
