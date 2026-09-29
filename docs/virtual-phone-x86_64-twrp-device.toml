@@ -1,0 +1,39 @@
+# TWRP Android 17/x86_64 port contract.
+# This defines the device tree inputs without claiming upstream compatibility.
+
+[device]
+path = "device/qemu/virtual-phone"
+core_repository = "https://github.com/TeamWin/android_bootable_recovery.git"
+core_branch = "android-14.1"
+architecture = "x86_64"
+product = "sdk_phone64_x86_64-userdebug"
+status = "new-port-required"
+
+[kernel]
+source = "AOSP goldfish x86_64 6.12 kernel/modules"
+required_modules = ["virtio_pci", "virtio_blk", "virtio_net", "virtio_rng", "virtio_input", "drm_virtio_gpu", "virtio_console"]
+prohibited_prior_artifacts = ["historical TeamWin kernAl", "MTD-era recovery.fstab", "fixed 320x480 configuration"]
+
+[boot]
+recovery_image = "dedicated recovery.img"
+shared_devices = ["virtio-blk-pci", "virtio-net-pci", "virtio-gpu-pci", "virtio-input-pci", "virtio-rng-pci"]
+boot_contract = "PhoneBox non-A/B development profile"
+avb_state = "unlocked/orange with development keys"
+
+[storage]
+physical_partitions = ["boot", "vendor_boot", "recovery", "vbmeta", "metadata", "misc", "userdata"]
+logical_partitions = ["system", "system_dlkm", "system_ext", "product", "vendor"]
+filesystems = ["ext4", "f2fs", "erofs"]
+encryption = "unsupported until KeyMint and metadata-encryption spike passes"
+
+[ui]
+display = "DRM/KMS virtio-gpu dumb buffers"
+input = "evdev virtio-input with calibrated 1080x2280 portrait coordinates"
+keyboard = "virtio-input key device with Android/TWRP keylayout"
+audio = "not required"
+mtp = "optional, not a dependency"
+
+[adb]
+recovery_port = 5556
+mode = "debug-capable adbd plus minadbd for sideload"
+required_flows = ["shell", "push", "pull", "sideload", "reboot"]

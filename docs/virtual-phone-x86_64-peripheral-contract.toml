@@ -1,0 +1,64 @@
+# Guest-facing peripheral contracts for virtual-phone-x86_64.
+# These entries describe integration ownership; they do not claim support is built.
+
+[profile]
+product = "sdk_phone64_x86_64-userdebug"
+device = "emu64x"
+status = "contract-defined-implementation-pending"
+
+[battery]
+qemu_device = "goldfish_battery or compatible power_supply device"
+guest_service = "Health AIDL v4 default service"
+required_sysfs = "/sys/class/power_supply"
+acceptance = ["capacity", "status", "health", "present", "online", "dumpsys health"]
+
+[sensors]
+qemu_channel = "sensors"
+guest_hal = "android.hardware.sensors@2.1-impl.ranchu"
+transport = "Goldfish qemud sensor protocol"
+determinism = "fixed calibrated values; exclude random-bias event types until explicitly accepted"
+
+[camera]
+qemu_channel = "FakeRotatingCameraSensor"
+guest_hal = "Goldfish Ranchu camera provider"
+mode = "deterministic software test pattern"
+provider_policy = "select one camera provider instance; do not co-install ambiguous providers"
+
+[audio]
+qemu_device = "virtio-snd-pci"
+guest_kernel = "CONFIG_SND_VIRTIO"
+preferred_hal = "image-specific virtio/TinyALSA HAL"
+fallback = "HDA only when target image already supports snd_hda_intel/audio policy"
+
+[modem]
+qemu_device = "virtio-serial-pci"
+port_name = "modem"
+guest_service = "Goldfish Ranchu AIDL radio service"
+transport = "AT command channel to emulator modem simulator"
+call_audio = "out-of-scope"
+
+[input]
+qemu_device = "virtio-input-pci"
+required_events = ["EV_KEY", "EV_ABS", "ABS_MT_SLOT", "ABS_MT_TRACKING_ID"]
+resolution = "1080x2280 portrait"
+recovery_consumer = "TWRP evdev input backend"
+android_consumer = "Android InputReader with matching .idc"
+
+[graphics]
+qemu_device = "virtio-gpu-pci"
+recovery_consumer = "TWRP DRM/KMS dumb-buffer backend"
+android_consumer = "guest gralloc/HWC/SurfaceFlinger contract"
+software_fallback = "SwiftShader or lavapipe"
+accelerated_modes = ["virgl", "gfxstream/rutabaga experimental"]
+
+[adb]
+android_port = 5555
+recovery_port = 5556
+transport = "direct TCP through selected launcher networking profile"
+usb = "not required for initial profile"
+
+[twrp]
+core_branch = "android-14.1"
+device_path = "device/qemu/virtual-phone"
+recovery_image = "dedicated recovery.img"
+encryption = "unsupported until KeyMint/metadata-encryption spike passes"

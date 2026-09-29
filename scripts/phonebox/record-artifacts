@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Record hashes and metadata for a PhoneBox artifact directory.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: record-artifacts --root DIR --output MANIFEST
+
+Records every regular file below DIR with size, SHA-256, and relative path.
+EOF
+}
+root=
+output=
+while (($#)); do
+    case $1 in
+        --root) root=$2; shift 2; continue ;;
+        --output) output=$2; shift 2; continue ;;
+        -h|--help) usage >&1; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+done
+[[ -n $root && -n $output ]] || { echo 'error: --root and --output are required' >&2; usage; exit 2; }
+[[ -d $root ]] || { echo "error: artifact root not found: $root" >&2; exit 2; }
+mkdir -p "$(dirname -- "$output")"
+root=$(cd "$root" && pwd)
+{
+    printf '# virtual-phone-x86_64 artifact manifest\n'
+    printf 'root=%s\n' "$root"
+    printf 'generated_epoch=%s\n\n' "$(date +%s)"
+    printf '# sha256 bytes relative-path\n'
+    while IFS= read -r -d '' file; do
+        digest=$(sha256sum "$file" | awk '{print $1}')
+        bytes=$(stat -c '%s' "$file")
+        relative=${file#"$root"/}
+        printf '%s %s %s\n' "$digest" "$bytes" "$relative"
+    done < <(find "$root" -type f -print0 | sort -z)
+} > "$output"
+printf 'Artifact manifest: %s\n' "$output"

@@ -1,0 +1,35 @@
+# Development AVB/root profile for virtual-phone-x86_64.
+# This is an integration contract, not a production security configuration.
+
+[profile]
+state = "unlocked"
+verified_boot_state = "orange"
+oem_unlock = true
+user_build = false
+adb_root = true
+magisk_required = true
+production_claim = false
+
+[keys]
+private_key_directory = "outside-repository/phonebox-dev-keys"
+algorithm = "SHA256_RSA2048"
+rollback_index_policy = "persistent metadata state"
+public_fingerprint_record = "fingerprints.txt"
+
+[images]
+patch_selection = "inspect actual headers; patch exactly one ramdisk-bearing image"
+roles = ["boot", "init_boot", "vendor_boot", "recovery"]
+required_signing = ["vbmeta", "boot", "vendor_boot", "init_boot", "dtbo", "recovery"]
+missing_role_policy = "do not synthesize absent images"
+
+[writable_system]
+mechanism = "userdebug adb remount overlayfs"
+upper_layer = "userdata"
+base_images = ["system", "system_ext", "product", "vendor", "odm"]
+reset = "clear overlay/userdata explicitly"
+
+[acceptance_contract]
+required_properties = ["ro.boot.verifiedbootstate=orange", "ro.product.cpu.abi=x86_64", "ro.build.version.sdk=37"]
+required_root = ["magisk version", "magisk path", "su uid 0 after reboot"]
+required_persistence = ["AVB state survives reboot", "overlay marker survives reboot", "userdata reset removes overlay marker"]
+forbidden_shortcuts = ["delete vbmeta", "claim adb root equals Magisk root", "patch boot.img without image-role inspection"]

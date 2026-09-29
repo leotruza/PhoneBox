@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Patch exactly one Android ramdisk-bearing image with pinned MagiskBoot.
+# Image-role selection is explicit: this tool never guesses boot/init_boot.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: patch-magisk-image --magiskboot PATH --input IMAGE --output IMAGE [options]
+
+Required:
+  --magiskboot PATH   MagiskBoot executable from the pinned artifact
+  --input IMAGE       original boot/init_boot/vendor_boot/recovery image
+  --output IMAGE      patched output image
+
+Options:
+  --role NAME         boot, init_boot, vendor_boot, or recovery (required)
+  --work-dir DIR      temporary work directory
+  --allow-overwrite   allow output to replace an existing file
+  --help              show this help
+
+The caller must determine the correct image role from actual Android image
+headers and board configuration before invoking this tool.
+EOF
+}
+
+magiskboot=
+input=
+output=
+role=
+work_dir=
+allow_overwrite=0
+while (($#)); do
+    case $1 in
+        --magiskboot) magiskboot=$2; shift 2; continue ;;
+        --input) input=$2; shift 2; continue ;;
+        --output) output=$2; shift 2; continue ;;
+        --role) role=$2; shift 2; continue ;;
+        --work-dir) work_dir=$2; shift 2; continue ;;
+        --allow-overwrite) allow_overwrite=1 ;;
+        -h|--help) usage >&1; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+[[ -n $magiskboot && -n $input && -n $output && -n $role ]] || { echo 'error: --magiskboot, --input, --output, and --role are required' >&2; usage; exit 2; }
+case $role in boot|init_boot|vendor_boot|recovery) ;; *) echo "error: unsupported image role: $role" >&2; exit 2 ;; esac
+[[ -x $magiskboot ]] || { echo "error: MagiskBoot is not executable: $magiskboot" >&2; exit 2; }
+[[ -r $input ]] || { echo "error: input image is not readable: $input" >&2; exit 2; }
+if [[ -e $output && $allow_overwrite -eq 0 ]]; then
+    echo "error: output exists; use --allow-overwrite: $output" >&2
+    exit 2
+fi
+work_dir=${work_dir:-$(mktemp -d "${TMPDIR:-/tmp}/phonebox-magisk.XXXXXX")}
+created_work=0
+if [[ ! -e $work_dir ]]; then mkdir -p "$work_dir"; created_work=1; fi
+cleanup() { if ((created_work)); then rm -rf "$work_dir"; fi; }
+trap cleanup EXIT
+mkdir -p "$(dirname -- "$output")"
+cp -- "$input" "$work_dir/original.img"
+sha256sum "$work_dir/original.img" > "$work_dir/original.sha256"
+(
+    cd "$work_dir"
+    "$magiskboot" unpack original.img
+    "$magiskboot" repack original.img patched.img
+)
+[[ -s "$work_dir/patched.img" ]] || { echo 'error: MagiskBoot did not produce patched.img' >&2; exit 1; }
+cp -- "$work_dir/patched.img" "$output"
+{
+    printf '# PhoneBox Magisk patch record\n'
+    printf 'role=%s\n' "$role"
+    printf 'magiskboot=%s\n' "$magiskboot"
+    printf 'input=%s\n' "$input"
+    printf 'output=%s\n' "$output"
+    sha256sum "$input" "$output"
+} > "$output.magisk-record"
+printf 'Patched image: %s\nRecord: %s\n' "$output" "$output.magisk-record"

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Provision PhoneBox development AVB keys and a reproducible fingerprint file.
+# This creates keys only when explicitly invoked on a development host.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: prepare-dev-keys --output DIR [--force]
+
+Creates:
+  avb.pem          RSA-2048 private signing key
+  avb.pub          AVB public key, when avbtool is available
+  fingerprints.txt SHA-256 fingerprints of generated key artifacts
+
+The output directory is sensitive and must not be committed.
+EOF
+}
+
+output=
+force=0
+while (($#)); do
+    case $1 in
+        --output) (($# >= 2)) || { echo 'error: --output requires a directory' >&2; exit 2; }; output=$2; shift 2; continue ;;
+        --force) force=1 ;;
+        -h|--help) usage >&1; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+[[ -n $output ]] || { echo 'error: --output is required' >&2; usage; exit 2; }
+command -v openssl >/dev/null 2>&1 || { echo 'error: openssl is required' >&2; exit 127; }
+if [[ -e $output && $force -eq 0 ]]; then
+    echo "error: output exists; use --force: $output" >&2
+    exit 2
+fi
+if ((force)); then rm -rf -- "$output"; fi
+umask 077
+mkdir -p "$output"
+openssl genrsa -out "$output/avb.pem" 2048 >/dev/null 2>&1
+if command -v avbtool >/dev/null 2>&1; then
+    avbtool extract_public_key --key "$output/avb.pem" --output "$output/avb.pub"
+else
+    printf 'avbtool unavailable; generate avb.pub with avbtool extract_public_key\n' > "$output/avb.pub.pending"
+fi
+{
+    printf '# PhoneBox development AVB key fingerprints\n'
+    for file in "$output"/*; do
+        [[ -f $file ]] || continue
+        sha256sum "$file"
+    done
+} > "$output/fingerprints.txt"
+printf 'Development AVB key material: %s\n' "$output"
