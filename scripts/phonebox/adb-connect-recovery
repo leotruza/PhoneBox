@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Connect ADB to the TWRP recovery profile on guest TCP port 5556.
+
+set -euo pipefail
+adb_bin=${PHONEBOX_ADB:-adb}
+host=${1:-${PHONEBOX_ADB_HOST:-127.0.0.1}}
+port=${2:-${PHONEBOX_RECOVERY_ADB_PORT:-5556}}
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    printf 'Usage: adb-connect-recovery [HOST] [PORT]\n'
+    exit 0
+fi
+[[ $port =~ ^[0-9]+$ && $port -gt 0 && $port -le 65535 ]] || {
+    echo "error: invalid recovery ADB port: $port" >&2; exit 2;
+}
+command -v "$adb_bin" >/dev/null 2>&1 || {
+    echo "error: ADB binary not found: $adb_bin" >&2; exit 127;
+}
+exec "$adb_bin" connect "${host}:${port}"

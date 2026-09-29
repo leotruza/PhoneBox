@@ -1,0 +1,28 @@
+# Development host profile for the virtual-phone-x86_64 build.
+
+[minimum]
+architecture = "x86_64"
+cpus = 16
+ram_gib = 32
+free_disk_gib = 250
+kvm = true
+linux = true
+network = "outbound HTTPS/Git plus TAP capability for GBL IPv6"
+
+[recommended]
+cpus = 32
+ram_gib = 64
+free_disk_gib = 500
+kvm = true
+ssd = true
+
+[tools]
+required = ["git", "repo", "bazel or bazelisk", "meson", "ninja", "gcc/clang", "nasm", "iasl", "qemu-img", "sgdisk", "openssl", "python3"]
+android = ["AOSP build prerequisites", "unpack_bootimg", "lpdump", "avbtool", "adb", "fastboot"]
+firmware = ["EDK II BaseTools", "OVMF build dependencies"]
+windows_acceptance = ["Windows 10/11", "versioned platform-tools adb.exe and fastboot.exe"]
+
+[resource_policy]
+sandbox = "static tooling and disposable experiments only"
+full_aosp_build = "requires persistent/local host"
+reference_performance = "requires KVM-capable host"

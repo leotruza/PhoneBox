@@ -1,0 +1,38 @@
+# GBL/OVMF protocol matrix for virtual-phone-x86_64.
+# This is the firmware implementation contract for a future PhoneBoxPkg.
+
+[profile]
+gbl_target = "x86_64_dev"
+firmware_platform = "OvmfPkg/OvmfPkgX64.dsc"
+boot_path = "/EFI/BOOT/BOOTX64.EFI"
+status = "contract-defined-implementation-pending"
+
+[standard_uefi]
+block_io = { status = "required", owner = "OVMF VirtioBlkDxe", verification = "whole-disk handle plus GPT names" }
+block_io2 = { status = "optional", owner = "NVMe or virtio-SCSI profile", verification = "only required for async flash path" }
+rng = { status = "required-production", owner = "OVMF RngDxe/VirtioRngDxe", verification = "runtime GetRNG entropy" }
+memory_allocation = { status = "required", owner = "UEFI boot services", verification = "GBL image-buffer allocation" }
+simple_text_output = { status = "required", owner = "OVMF console", verification = "GBL no-op-safe console" }
+simple_network = { status = "required-for-tcp-dev", owner = "OVMF VirtioNetDxe", verification = "SNP plus link-local IPv6" }
+
+[android_gbl]
+boot_control = { status = "required", owner = "PhoneBoxPkg BootControlDxe", state = "misc partition" }
+avb = { status = "required", owner = "PhoneBoxPkg AvbDxe", state = "metadata partition and dev keys" }
+api_variable = { status = "required", owner = "PhoneBoxPkg VendorVariableDxe", name = "gbl_fw_api_level", read_only = true }
+os_configuration = { status = "optional-until-needed", owner = "PhoneBoxPkg OsConfigurationDxe", purpose = "bootconfig/FDT policy" }
+boot_memory = { status = "optional-until-needed", owner = "PhoneBoxPkg BootMemoryDxe", purpose = "reserved image buffers" }
+avf = { status = "out-of-initial-scope", owner = "PhoneBoxPkg AvfDxe", purpose = "protected VMs/pVM firmware" }
+fastboot_transport = { status = "development-tcp-only", owner = "GBL SNP/smoltcp", port = 5554 }
+
+[storage]
+whole_disk = true
+gpt_required = true
+partition_naming = "stable GPT names, no invented partitions"
+esp_a = { name = "android_esp_a", minimum_mib = 8, planned_mib = 16 }
+esp_b = { name = "android_esp_b", minimum_mib = 8, planned_mib = 16 }
+raw_storage_device_path = "only when GBL raw-storage addressing is required"
+
+[production_boundary]
+tcp_fastboot = "must be absent or explicitly gated"
+static_randomness = "not acceptable"
+secure_avb = "requires production keys, rollback policy, and lock-state review"

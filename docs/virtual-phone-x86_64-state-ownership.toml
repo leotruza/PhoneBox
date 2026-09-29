@@ -1,0 +1,34 @@
+# State ownership contract for virtual-phone-x86_64.
+
+[gpt]
+owner = "state.qcow2 GPT"
+reset = "rebuild disk or explicit partition rewrite"
+
+[userdata]
+owner = "userdata partition"
+reset = "fastboot erase userdata, TWRP wipe, or factory reset"
+persists = ["Android files", "TWRP files", "overlayfs upper layer"]
+
+[misc]
+owner = "PhoneBox BootControlDxe"
+reset = "explicit boot-mode/retry reset only"
+contains = ["recovery request", "single-slot retry metadata"]
+
+[metadata]
+owner = "PhoneBox AvbDxe"
+reset = "explicit AVB-state reset only"
+contains = ["rollback indexes", "development lock state", "metadata-encryption state when enabled"]
+
+[ovmf_vars]
+owner = "per-instance OVMF_VARS.fd"
+reset = "replace from pristine template"
+contains = ["UEFI variables", "boot manager entries"]
+
+[qemu_snapshots]
+owner = "QEMU internal snapshot or external qcow2 overlay"
+reset = "snapshot delete or overlay discard"
+consistency = "clean shutdown or guest filesystem freeze required"
+
+[policy]
+factory_reset_must_not_clear = ["misc", "metadata AVB state", "OVMF variables"]
+concurrent_instances = "never share writable disk or OVMF vars"
