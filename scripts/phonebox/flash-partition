@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Flash one explicitly named partition through the Fastboot TCP wrapper.
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: flash-partition --address ADDRESS --partition NAME --image PATH [options]
+
+Options:
+  --port PORT       Fastboot TCP port, default: 5554
+  --fastboot PATH   fastboot binary, default: fastboot
+  --dry-run         print the command without executing it
+  --help            show this help
+
+This tool does not infer partition names and refuses an absent image.
+EOF
+}
+address=
+partition=
+image=
+port=${PHONEBOX_FASTBOOT_PORT:-5554}
+fastboot_bin=${PHONEBOX_FASTBOOT:-fastboot}
+dry_run=0
+while (($#)); do
+    case $1 in
+        --address) address=$2; shift 2; continue ;;
+        --partition) partition=$2; shift 2; continue ;;
+        --image) image=$2; shift 2; continue ;;
+        --port) port=$2; shift 2; continue ;;
+        --fastboot) fastboot_bin=$2; shift 2; continue ;;
+        --dry-run) dry_run=1 ;;
+        -h|--help) usage >&1; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+[[ -n $address && -n $partition && -n $image ]] || { echo 'error: --address, --partition, and --image are required' >&2; usage; exit 2; }
+[[ $partition =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "error: invalid partition name: $partition" >&2; exit 2; }
+[[ $port =~ ^[0-9]+$ && $port -gt 0 && $port -le 65535 ]] || { echo "error: invalid port: $port" >&2; exit 2; }
+if ((dry_run == 0)); then
+    [[ -r $image ]] || { echo "error: image is not readable: $image" >&2; exit 2; }
+    command -v "$fastboot_bin" >/dev/null 2>&1 || { echo "error: Fastboot binary not found: $fastboot_bin" >&2; exit 127; }
+fi
+endpoint="tcp:${address}:${port}"
+printf 'Fastboot flash command: %q -s %q flash %q %q\n' "$fastboot_bin" "$endpoint" "$partition" "$image"
+if ((dry_run)); then exit 0; fi
+exec "$fastboot_bin" -s "$endpoint" flash "$partition" "$image"

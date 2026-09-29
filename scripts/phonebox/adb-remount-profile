@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Apply the PhoneBox userdebug writable-system contract through ADB.
+
+set -euo pipefail
+adb_bin=${PHONEBOX_ADB:-adb}
+marker=${PHONEBOX_REMOUNT_MARKER:-phonebox-dev-$(date +%s)}
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: adb-remount-profile [--adb PATH] [--marker VALUE]
+
+Runs adb root, adb remount, writes a marker through the system overlay, and
+prints the mount evidence. Reboot persistence is an operator acceptance step;
+this helper does not silently claim it.
+EOF
+}
+while (($#)); do
+    case $1 in
+        --adb) adb_bin=$2; shift 2; continue ;;
+        --marker) marker=$2; shift 2; continue ;;
+        -h|--help) usage >&1; exit 0 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+done
+command -v "$adb_bin" >/dev/null 2>&1 || { echo "error: ADB binary not found: $adb_bin" >&2; exit 127; }
+"$adb_bin" root
+"$adb_bin" wait-for-device
+"$adb_bin" remount
+"$adb_bin" shell "printf '%s' '$marker' > /system/etc/phonebox-dev-marker"
+"$adb_bin" shell 'cat /system/etc/phonebox-dev-marker'
+"$adb_bin" shell 'mount | grep -E " /system |overlay"'
+printf 'Reboot separately, then verify /system/etc/phonebox-dev-marker persists.\n'

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Request the development AVB/unlocked state through Fastboot.
+# The firmware remains the authority and may reject unsupported transitions.
+
+set -euo pipefail
+fastboot_bin=${PHONEBOX_FASTBOOT:-fastboot}
+endpoint=
+mode=
+dry_run=0
+usage() {
+    cat >&2 <<'EOF'
+Usage: set-dev-avb-state --address ADDRESS [--port 5554] {unlock|disable-verification}
+
+This is for the unlocked development profile only. It does not delete vbmeta
+or claim that AVB is disabled.
+EOF
+}
+port=5554
+while (($#)); do
+    case $1 in
+        --address) endpoint=$2; shift 2; continue ;;
+        --port) port=$2; shift 2; continue ;;
+        --fastboot) fastboot_bin=$2; shift 2; continue ;;
+        --dry-run) dry_run=1 ;;
+        -h|--help) usage >&1; exit 0 ;;
+        unlock|disable-verification) mode=$1 ;;
+        *) echo "error: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+[[ -n $endpoint && -n $mode ]] || { echo 'error: --address and one mode are required' >&2; usage; exit 2; }
+[[ $port =~ ^[0-9]+$ && $port -gt 0 && $port -le 65535 ]] || { echo "error: invalid port: $port" >&2; exit 2; }
+if ((dry_run == 0)); then command -v "$fastboot_bin" >/dev/null 2>&1 || { echo "error: Fastboot binary not found: $fastboot_bin" >&2; exit 127; }; fi
+remote="tcp:${endpoint}:${port}"
+case $mode in
+    unlock) args=(flashing unlock) ;;
+    disable-verification) args=(--disable-verity --disable-verification) ;;
+esac
+printf 'Fastboot development AVB command: %q -s %q' "$fastboot_bin" "$remote"
+for arg in "${args[@]}"; do printf ' %q' "$arg"; done
+printf '\n'
+if ((dry_run)); then exit 0; fi
+exec "$fastboot_bin" -s "$remote" "${args[@]}"
